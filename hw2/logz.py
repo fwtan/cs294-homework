@@ -73,6 +73,10 @@ def save_params(params):
     with open(osp.join(G.output_dir, "params.json"), 'w') as out:
         out.write(json.dumps(params, separators=(',\n','\t:\t'), sort_keys=True))
 
+def save_config(config):
+    with open(osp.join(G.output_dir, "params.json"), 'w') as fp:
+        json.dump(config.__dict__, fp, indent=4, sort_keys=True)
+
 def pickle_tf_vars():  
     """
     Saves tensorflow variables
