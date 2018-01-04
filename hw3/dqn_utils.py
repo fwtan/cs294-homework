@@ -7,7 +7,7 @@ import random
 
 def huber_loss(x, delta=1.0):
     # https://en.wikipedia.org/wiki/Huber_loss
-    return tf.select(
+    return tf.where(
         tf.abs(x) < delta,
         tf.square(x) * 0.5,
         delta * (tf.abs(x) - 0.5 * delta)
@@ -69,7 +69,7 @@ class PiecewiseSchedule(object):
         assert idxes == sorted(idxes)
         self._interpolation = interpolation
         self._outside_value = outside_value
-        self._endpoints      = endpoints
+        self._endpoints     = endpoints
 
     def value(self, t):
         """See Schedule.value"""
@@ -175,7 +175,7 @@ class ReplayBuffer(object):
     def __init__(self, size, frame_history_len):
         """This is a memory efficient implementation of the replay buffer.
 
-        The sepecific memory optimizations use here are:
+        The specific memory optimizations use here are:
             - only store each frame once rather than k times
               even if every observation normally consists of k last frames
             - store frames as np.uint8 (actually it is most time-performance
@@ -183,7 +183,7 @@ class ReplayBuffer(object):
               time)
             - store frame_t and frame_(t+1) in the same buffer.
 
-        For the tipical use case in Atari Deep RL buffer with 1M frames the total
+        For the typical use case in Atari Deep RL buffer with 1M frames the total
         memory footprint of this buffer is 10^6 * 84 * 84 bytes ~= 7 gigabytes
 
         Warning! Assumes that returning frame of zeros at the beginning
@@ -196,7 +196,7 @@ class ReplayBuffer(object):
             Max number of transitions to store in the buffer. When the buffer
             overflows the old memories are dropped.
         frame_history_len: int
-            Number of memories to be retried for each observation.
+            Number of memories to be retrieved for each observation.
         """
         self.size = size
         self.frame_history_len = frame_history_len
@@ -221,7 +221,6 @@ class ReplayBuffer(object):
         done_mask      = np.array([1.0 if self.done[idx] else 0.0 for idx in idxes], dtype=np.float32)
 
         return obs_batch, act_batch, rew_batch, next_obs_batch, done_mask
-
 
     def sample(self, batch_size):
         """Sample `batch_size` different transitions.
@@ -283,6 +282,7 @@ class ReplayBuffer(object):
         # if there weren't enough frames ever in the buffer for context
         if start_idx < 0 and self.num_in_buffer != self.size:
             start_idx = 0
+        # 'done' could not appear in the middle of the sequence
         for idx in range(start_idx, end_idx - 1):
             if self.done[idx % self.size]:
                 start_idx = idx + 1

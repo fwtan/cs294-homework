@@ -128,6 +128,19 @@ def learn(env,
     ######
     
     # YOUR CODE HERE
+    q_all   = q_func(obs_t_float,   num_actions, scope="q_func",      reuse=False)
+    targets = q_func(obs_tp1_float, num_actions, scope="target_func", reuse=False)
+    q_func_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='q_func')
+    target_q_func_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='target_func')
+
+    N = tf.shape(act_t_ph)[0]
+    cols = tf.reshape(act_t_ph, [-1, 1])
+    rows = tf.reshape(tf.range(0, N), [-1, 1])
+    indices = tf.concat([rows, cols], -1)
+
+    targets = rew_t_ph + gamma * tf.reduce_max(targets, axis=-1) * (1.0 - done_mask_ph)
+    q_vals = tf.gather_nd(q_all, indices)
+    total_error = tf.reduce_mean(huber_loss(q_vals - targets))
 
     ######
 
@@ -195,7 +208,16 @@ def learn(env,
         #####
         
         # YOUR CODE HERE
-
+        cur_idx = replay_buffer.store_frame(last_obs)
+        if (np.random.random() < exploration.value(t)) or (not model_initialized):
+            cur_act = np.random.randint(0, num_actions)
+        else:
+            cur_obs = replay_buffer.encode_recent_observation()
+            cur_qvs = session.run(q_all, feed_dict={obs_t_ph: cur_obs[None,:]})
+            cur_act = np.argmax(cur_qvs[0])
+        nxt_obs, cur_rew, cur_done, cur_info = env.step(cur_act)
+        replay_buffer.store_effect(cur_idx, cur_act, cur_rew, cur_done)
+        last_obs = env.reset() if cur_done else nxt_obs
         #####
 
         # at this point, the environment should have been advanced one step (and
@@ -207,8 +229,8 @@ def learn(env,
         # for us to learn something useful -- until then, the model will not be
         # initialized and random actions should be taken
         if (t > learning_starts and
-                t % learning_freq == 0 and
-                replay_buffer.can_sample(batch_size)):
+            t % learning_freq == 0 and
+            replay_buffer.can_sample(batch_size)):
             # Here, you should perform training. Training consists of four steps:
             # 3.a: use the replay buffer to sample a batch of transitions (see the
             # replay buffer code for function definition, each batch that you sample
@@ -245,6 +267,29 @@ def learn(env,
             #####
             
             # YOUR CODE HERE
+            obs_t_batch, act_t_batch, rew_t_batch, obs_tp1_batch, done_t_mask = \
+                replay_buffer.sample(batch_size)
+
+            if not model_initialized:
+                initialize_interdependent_variables(session, tf.global_variables(), {
+                    obs_t_ph: obs_t_batch,
+                    obs_tp1_ph: obs_tp1_batch,
+                })
+                model_initialized = True
+
+            feed = {obs_t_ph: obs_t_batch, \
+                    act_t_ph: act_t_batch, \
+                    rew_t_ph: rew_t_batch, \
+                    obs_tp1_ph: obs_tp1_batch, \
+                    done_mask_ph: done_t_mask, \
+                    learning_rate: optimizer_spec.lr_schedule.value(t)}
+            
+            loss, _ = session.run([total_error, train_fn], feed_dict=feed)
+            num_param_updates += 1
+
+            if num_param_updates % target_update_freq == 0:
+                session.run(update_target_fn)
+                num_param_updates = 0
 
             #####
 
