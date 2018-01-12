@@ -16,43 +16,34 @@ from torch.autograd import Variable
 
 
 class PolicyNet(nn.Module):
-    def __init__(self, 
-        no, na, n_layers, size, discrete,
-        activation=nn.Tanh(), output_activation=None):
+    def __init__(self, no, na, n_layers, size, discrete):
         super(PolicyNet, self).__init__()
 
         self.n_layers = n_layers
+        self.activation = nn.Tanh()
+        if discrete:
+            self.output_activation = nn.Softmax(dim=1)
+            self.sigma = None
+        else:
+            self.output_activation = None
+            self.sigma = nn.Parameter(torch.rand(1))
 
-        self.activation = None
-        self.output_activation = None
-
-        if activation is not None:
-            self.activation = nn.Sequential(activation)
-        if output_activation is not None:
-            self.output_activation = nn.Sequential(output_activation)
-
-        self.first = nn.Sequential(nn.Linear(no, size))
-        self.last  = nn.Sequential(nn.Linear(size, na))
+        self.first = nn.Linear(no, size)
+        self.last  = nn.Linear(size, na)
 
         for i in range(n_layers-1):
-            setattr(self, 'hidden_%02d'%i, nn.Sequential(nn.Linear(size, size)))
-
-        self.sigma = None
-        if not discrete:
-            self.sigma = nn.Parameter(torch.rand(1))
+            setattr(self, 'hidden_%02d'%i, nn.Linear(size, size))
 
     def forward(self, O):
         X = self.first(O)
-        if self.activation:
-            X = self.activation(X)
+        X = self.activation(X)
         for i in range(self.n_layers-1):
             X = getattr(self, 'hidden_%02d'%i)(X)
-            if self.activation:
-                X = self.activation(X)
-        X = self.last(X)
-        if self.output_activation:
-            X = self.output_activation(X)
-        return X, self.sigma
+            X = self.activation(X)
+        Y = self.last(X)
+        if self.output_activation is not None:
+            Y = self.output_activation(Y)
+        return Y, self.sigma
 
 
 def pathlength(path):
@@ -88,11 +79,13 @@ def train_PG(opt):
     ac_dim = env.action_space.n if discrete else env.action_space.shape[0]
 
     # Policy net, the underlying model is a mlp
-    policy_net = PolicyNet(ob_dim, ac_dim, opt.n_layers, opt.size, discrete, output_activation=nn.Softmax(dim=1))
-
+    policy_net = PolicyNet(ob_dim, ac_dim, opt.n_layers, opt.size, discrete)
+    optimizer = optim.Adam(policy_net.parameters(), lr=opt.learning_rate)
+    
     # Neural network baseline (the mean reward to reduce the variance of the gradient)
     if opt.nn_baseline:
-        baseline_net = PolicyNet(ob_dim, 1, opt.n_layers, opt.size, discrete)
+        baseline_net = PolicyNet(ob_dim, 1, opt.n_layers, opt.size, False)
+        baseline_optimizer = optim.Adam(baseline_net.parameters(), lr=opt.learning_rate)
      
     total_timesteps = 0
     for itr in range(opt.n_iter):
@@ -120,15 +113,13 @@ def train_PG(opt):
                 obs.append(ob)
 
                 # run the policy net to collect the actions
-                obs_np = ob[None,:].astype(np.float32)
-                obs_th = torch.from_numpy(obs_np)
+                obs_th = torch.from_numpy(ob[None,:]).float()
                 if opt.cuda:
                     obs_th = obs_th.cuda()
                 
                 if discrete:
                     probs, _ = policy_net(Variable(obs_th))
-                    probs = torch.squeeze(probs, dim=0)
-                    # multinomial sampling, a biased exploration
+                    # multinomial sampling
                     m = torch.distributions.Categorical(probs)
                     ac = m.sample().data.numpy()
                 else:
@@ -165,8 +156,7 @@ def train_PG(opt):
 
         # discount for reward computation
         gamma = opt.discount
-
-        # Q values
+        # trajectory rewards
         q_n = []
         if opt.reward_to_go:
             for path in paths:
@@ -177,7 +167,7 @@ def train_PG(opt):
                     cr = path["reward"][k]
                     tr = gamma * tr + cr
                     pr.append(tr)
-                q_n.extend(pr)
+                q_n.extend(pr[::-1])
         else:
             for path in paths:
                 n_samples = len(path["reward"])
@@ -194,9 +184,7 @@ def train_PG(opt):
         # the Q values
         if opt.nn_baseline:
             baseline_net.eval()
-
-            obs_np = ob_no.astype(np.float32)
-            obs_th = torch.from_numpy(obs_np)
+            obs_th = torch.from_numpy(ob_no).float()
             if opt.cuda:
                 obs_th = obs_th.cuda()
             b_n, _ = baseline_net(Variable(obs_th))
@@ -217,9 +205,9 @@ def train_PG(opt):
         
         # Pytorch tensors 
         batch_size = ob_no.shape[0]
-        ob_no_th = torch.from_numpy(ob_no)
-        ac_na_th = torch.from_numpy(ac_na)
-        adv_n_th = torch.from_numpy(adv_n)
+        ob_no_th = torch.from_numpy(ob_no).float()
+        ac_na_th = torch.from_numpy(ac_na).float()
+        adv_n_th = torch.from_numpy(adv_n).float()
         
         if opt.cuda:
             ob_no_th = ob_no_th.cuda()
@@ -228,22 +216,17 @@ def train_PG(opt):
 
         if opt.nn_baseline:
             # train the baseline network
-
             q_mu = np.mean(q_n)
             q_sigma = np.std(q_n)
-            n_q_n  = (q_n - q_mu)/q_sigma
-            n_q_n  = n_q_n.astype(np.float32)
-            q_n_th = torch.from_numpy(n_q_n) 
+            q_n_th = torch.from_numpy((q_n - q_mu)/q_sigma).float() 
             if opt.cuda:
                 q_n_th = q_n_th.cuda()
 
             baseline_net.train()
             baseline_criterion = nn.MSELoss()
-            baseline_optimizer = optim.Adam(baseline_net.parameters(), 
-                lr=opt.learning_rate, betas=(0.5, 0.999))
             
             baseline_net.zero_grad()
-            pred, _ baseline_net(Variable(ob_no_th))
+            pred, _ = baseline_net(Variable(ob_no_th))
             pred = torch.squeeze(pred, dim=-1)
             baseline_loss = baseline_criterion(pred, Variable(q_n_th))
             baseline_loss.backward()
@@ -251,20 +234,17 @@ def train_PG(opt):
             baseline_error = baseline_loss.data[0]
 
         policy_net.train()
-        optimizer = optim.Adam(policy_net.parameters(), 
-                lr=opt.learning_rate, betas=(0.5, 0.999))
         policy_net.zero_grad()
         if discrete:
             probs, _ = policy_net(Variable(ob_no_th))
             # multinomial sampling, a biased exploration
             m = torch.distributions.Categorical(probs)
-            ac = m.sample()
-            loss = -m.log_prob(ac) * Variable(adv_n_th)
-            
+            loss = -m.log_prob(Variable(ac_na_th)) * Variable(adv_n_th)
+            loss = loss.mean()
         else:
-            policy_criterion = nn.MSELoss()
             means, sigma = policy_net(Variable(ob_no_th))
-            loss = policy_criterion(means, Variable(ac_na_th/(sigma+1e-4)))
+            diff = (means - Variable(ac_na_th, requires_grad=False)/(sigma+1e-8)) ** 2
+            loss = torch.mean(torch.sum(diff, -1))
 
         loss.backward()
         optimizer.step()
@@ -287,7 +267,6 @@ def train_PG(opt):
         if opt.nn_baseline:
             logz.log_tabular("BaselineLoss", baseline_error)
         logz.dump_tabular()
-        # logz.pickle_tf_vars()
 
 
 def main():
@@ -327,28 +306,11 @@ def main():
         opt.seed = seed
         opt.logdir = osp.join(logdir,'%d'%seed)
         print('Running experiment with seed %d'%seed)
-        train_PG(opt)
-        # def train_func():
-        #     train_PG(
-        #         exp_name=args.exp_name,
-        #         env_name=args.env_name,
-        #         n_iter=args.n_iter,
-        #         gamma=args.discount,
-        #         min_timesteps_per_batch=args.batch_size,
-        #         max_path_length=max_path_length,
-        #         learning_rate=args.learning_rate,
-        #         reward_to_go=args.reward_to_go,
-        #         animate=args.render,
-        #         logdir=os.path.join(logdir,'%d'%seed),
-        #         normalize_advantages=not(args.dont_normalize_advantages),
-        #         nn_baseline=args.nn_baseline, 
-        #         seed=seed,
-        #         n_layers=args.n_layers,
-        #         size=args.size
-        #         )
-        # p = Process(target=train_func, args=tuple())
-        # p.start()
-        # p.join()
+        def train_func():
+            train_PG(opt)
+        p = Process(target=train_func, args=tuple())
+        p.start()
+        p.join()
         
 
 if __name__ == "__main__":
