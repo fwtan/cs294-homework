@@ -127,6 +127,7 @@ def train_qnet(opt, env, optimizer_spec,
             targets, _ = torch.max(targets, -1)
             targets = rew_th + gamma * targets.data * (1.0 - msk_th)
 
+            qnet.zero_grad()
             qvals = qnet(Variable(cur_obs_th))
             preds = qvals.gather(-1, Variable(act_th.unsqueeze(-1).long())).squeeze(-1)
             criterion = nn.SmoothL1Loss()
@@ -146,7 +147,6 @@ def train_qnet(opt, env, optimizer_spec,
                 tnet = deepcopy(qnet)
                 if opt.cuda:
                     tnet = tnet.cuda()
-                print('update target net')
                 num_param_updates = 0
 
             
@@ -159,7 +159,7 @@ def train_qnet(opt, env, optimizer_spec,
             mean_episode_reward = np.mean(episode_rewards[-100:])
         if len(episode_rewards) > 100:
             best_mean_episode_reward = max(best_mean_episode_reward, mean_episode_reward)
-        if t % LOG_EVERY_N_STEPS == 0:
+        if t > learning_starts and t % LOG_EVERY_N_STEPS == 0:
             print("Timestep %d" % (t,))
             print("mean reward (100 episodes) %f" % mean_episode_reward)
             print("best mean reward %f" % best_mean_episode_reward)
