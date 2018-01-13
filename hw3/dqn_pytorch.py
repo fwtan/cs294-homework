@@ -70,6 +70,8 @@ def train_qnet(opt, env, optimizer_spec,
     if opt.cuda:
         qnet = qnet.cuda()
     tnet = deepcopy(qnet)
+    if opt.cuda:
+        tnet = tnet.cuda()
     
     # construct the replay buffer
     replay_buffer = ReplayBuffer(replay_buffer_size, frame_history_len)
@@ -95,6 +97,8 @@ def train_qnet(opt, env, optimizer_spec,
         else:
             cur_obs = replay_buffer.encode_recent_observation()
             cur_obs_th = torch.from_numpy(cur_obs[None,:].transpose((0, 3, 1, 2))).float()/255.0
+            if opt.cuda:
+                cur_obs_th = cur_obs_th.cuda()
             cur_qvs_th = tnet(Variable(cur_obs_th))
             cur_qvs = cur_qvs_th.cpu().data.numpy()
             cur_act = np.argmax(cur_qvs[0])
@@ -115,6 +119,9 @@ def train_qnet(opt, env, optimizer_spec,
             act_th = torch.from_numpy(act_t_batch).long()
             rew_th = torch.from_numpy(rew_t_batch).float()
             msk_th = torch.from_numpy(done_t_mask).float()
+            if opt.cuda:
+                cur_obs_th, nxt_obs_th = cur_obs_th.cuda(), nxt_obs_th.cuda()
+                act_th, rew_th, msk_th = act_th.cuda(), rew_th.cuda(), msk_th.cuda()
 
             targets = tnet(Variable(nxt_obs_th))
             targets, _ = torch.max(targets, -1)
@@ -137,6 +144,8 @@ def train_qnet(opt, env, optimizer_spec,
 
             if num_param_updates % target_update_freq == 0:
                 tnet = deepcopy(qnet)
+                if opt.cuda:
+                    tnet = tnet.cuda()
                 num_param_updates = 0
 
             
