@@ -116,7 +116,7 @@ def train_qnet(opt, env, optimizer_spec,
             
             cur_obs_th = torch.from_numpy(obs_t_batch.transpose((0, 3, 1, 2))).float()/255.0
             nxt_obs_th = torch.from_numpy(obs_tp1_batch.transpose((0, 3, 1, 2))).float()/255.0
-            act_th = torch.from_numpy(act_t_batch).long()
+            act_th = torch.from_numpy(act_t_batch)
             rew_th = torch.from_numpy(rew_t_batch).float()
             msk_th = torch.from_numpy(done_t_mask).float()
             if opt.cuda:
@@ -128,9 +128,9 @@ def train_qnet(opt, env, optimizer_spec,
             targets = rew_th + gamma * targets.data * (1.0 - msk_th)
 
             qvals = qnet(Variable(cur_obs_th))
-            preds = torch.gather(qvals, -1, Variable(act_th.unsqueeze(-1)))
+            preds = qvals.gather(-1, Variable(act_th.unsqueeze(-1).long())).squeeze(-1)
             criterion = nn.SmoothL1Loss()
-            loss = criterion(preds, Variable(targets, requires_grad=False))
+            loss = criterion(preds, Variable(targets))
             loss.backward()
             nn.utils.clip_grad_norm(qnet.parameters(), grad_norm_clipping)
             lr = optimizer_spec.lr_schedule.value(t)
