@@ -99,7 +99,7 @@ def train_qnet(opt, env, optimizer_spec,
             cur_obs_th = torch.from_numpy(cur_obs[None,:].transpose((0, 3, 1, 2))).float()/255.0
             if opt.cuda:
                 cur_obs_th = cur_obs_th.cuda()
-            cur_qvs_th = tnet(Variable(cur_obs_th))
+            cur_qvs_th = qnet(Variable(cur_obs_th))
             cur_qvs = cur_qvs_th.cpu().data.numpy()
             cur_act = np.argmax(cur_qvs[0])
         nxt_obs, cur_rew, cur_done, cur_info = env.step(cur_act)
@@ -146,6 +146,7 @@ def train_qnet(opt, env, optimizer_spec,
                 tnet = deepcopy(qnet)
                 if opt.cuda:
                     tnet = tnet.cuda()
+                print('update target net')
                 num_param_updates = 0
 
             
