@@ -244,7 +244,7 @@ def train_PG(opt):
         else:
             means, sigma = policy_net(Variable(ob_no_th))
             diff = (means - Variable(ac_na_th, requires_grad=False)/(sigma+1e-8)) ** 2
-            loss = torch.mean(torch.sum(diff, -1))
+            loss = torch.mean(torch.sum(diff, -1) * Variable(adv_n_th))
 
         loss.backward()
         optimizer.step()
