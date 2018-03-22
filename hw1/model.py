@@ -109,6 +109,7 @@ class model(object):
             loader = get_loader(db, self.opt, True)
 
             terr = 0.0
+            self.net.train()
             ###########   TRAINING   ##########
             for i, entry in tqdm(enumerate(loader, 1)):
                 ############################
